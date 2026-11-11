@@ -9,76 +9,69 @@ import {
   ArrowDownRight,
   CalendarDays,
 } from 'lucide-vue-next'
+import {
+  useTransactionStore, useBudgetStore, useSettingsStore,
+  formatCurrency, type BudgetItem,
+} from '@/stores/counter'
+
+const txStore       = useTransactionStore()
+const budgetStore   = useBudgetStore()
+const settingsStore = useSettingsStore()
 
 // ---------------------------------------------------------------------------
-// Types — mirrors future Supabase schema
+// Current period — derived from settings cutoff + most recent transaction date
 // ---------------------------------------------------------------------------
-interface Transaction {
-  id: string
-  date: string        // ISO date string
-  description: string
-  category: string
-  amount: number      // positive = income, negative = expense
-  type: 'income' | 'expense'
-}
-
-interface BudgetItem {
-  id: string
-  category: string
-  planned: number
-  actual: number
-}
-
-interface CutoffPeriod {
-  label: string       // e.g. "Nov 1 – Nov 15"
-  cutoff: 15 | 30
-  year: number
-  month: number       // 1-based
-}
+const currentPeriod = computed(() => {
+  const c1    = settingsStore.settings.cutoff1   // e.g. 15
+  const c2    = settingsStore.settings.cutoff2   // e.g. 30
+  // Find the latest transaction to determine active period
+  const latest = txStore.items.reduce<string | null>((max, t) => (!max || t.date > max ? t.date : max), null)
+  const ref    = latest ? new Date(latest) : new Date()
+  const year   = ref.getFullYear()
+  const month  = ref.getMonth() + 1  // 1-based
+  const day    = ref.getDate()
+  const cutoff = day <= c1 ? c1 : c2
+  const start  = cutoff === c1 ? 1 : c1 + 1
+  const end    = cutoff
+  const monthName = ref.toLocaleString('en-PH', { month: 'long' })
+  return {
+    label: `${monthName} ${start}–${end}, ${year}`,
+    cutoff: cutoff as 15 | 30,
+    year,
+    month,
+  }
+})
 
 // ---------------------------------------------------------------------------
-// Mock data
+// Budget items for current period (from shared store)
 // ---------------------------------------------------------------------------
-const currentPeriod: CutoffPeriod = {
-  label: 'Nov 1 – Nov 15',
-  cutoff: 15,
-  year: 2026,
-  month: 11,
-}
+const budgetItems = computed(() =>
+  budgetStore.forPeriod(currentPeriod.value.year, currentPeriod.value.month, currentPeriod.value.cutoff)
+)
 
-const income = 42500
+// Income = sum of income transactions for current period
+const income = computed(() =>
+  txStore.forPeriod(currentPeriod.value.year, currentPeriod.value.month, currentPeriod.value.cutoff)
+    .filter(t => t.type === 'income')
+    .reduce((s, t) => s + t.amount, 0)
+)
 
-const budgetItems: BudgetItem[] = [
-  { id: '1', category: 'Housing',       planned: 12000, actual: 12000 },
-  { id: '2', category: 'Food',          planned: 5000,  actual: 4320 },
-  { id: '3', category: 'Transport',     planned: 2000,  actual: 2450 },
-  { id: '4', category: 'Utilities',     planned: 1800,  actual: 1650 },
-  { id: '5', category: 'Health',        planned: 1500,  actual: 800 },
-  { id: '6', category: 'Entertainment', planned: 1000,  actual: 1200 },
-  { id: '7', category: 'Savings',       planned: 8000,  actual: 8000 },
-  { id: '8', category: 'Others',        planned: 2000,  actual: 1540 },
-]
-
-const recentTransactions: Transaction[] = [
-  { id: 't1', date: '2026-11-10', description: 'Salary',          category: 'Income',       amount:  42500, type: 'income' },
-  { id: 't2', date: '2026-11-10', description: 'Rent',            category: 'Housing',      amount: -12000, type: 'expense' },
-  { id: 't3', date: '2026-11-09', description: 'Groceries',       category: 'Food',         amount:  -2100, type: 'expense' },
-  { id: 't4', date: '2026-11-08', description: 'Electric bill',   category: 'Utilities',    amount:  -1650, type: 'expense' },
-  { id: 't5', date: '2026-11-08', description: 'Grab ride',       category: 'Transport',    amount:   -350, type: 'expense' },
-  { id: 't6', date: '2026-11-07', description: 'Netflix',         category: 'Entertainment',amount:   -449, type: 'expense' },
-  { id: 't7', date: '2026-11-07', description: 'Restaurant',      category: 'Food',         amount:  -1250, type: 'expense' },
-  { id: 't8', date: '2026-11-06', description: 'Savings transfer',category: 'Savings',      amount:  -8000, type: 'expense' },
-]
+// Recent transactions sourced from shared store
+const recentTransactions = computed(() => txStore.recent(8))
 
 // ---------------------------------------------------------------------------
 // Derived values
 // ---------------------------------------------------------------------------
-const totalPlanned = computed(() => budgetItems.reduce((s, i) => s + i.planned, 0))
-const totalActual  = computed(() => budgetItems.reduce((s, i) => s + i.actual, 0))
-const remaining    = computed(() => income - totalActual.value)
-const usagePct     = computed(() => Math.min(Math.round((totalActual.value / income) * 100), 100))
+const totalPlanned    = computed(() => budgetItems.value.reduce((s, i) => s + i.planned, 0))
+const totalActual     = computed(() => budgetItems.value.reduce((s, i) => s + i.actual, 0))
+const remaining       = computed(() => income.value - totalActual.value)
+const remainingBudget = computed(() => totalPlanned.value - totalActual.value)
+const usagePct        = computed(() =>
+  totalPlanned.value > 0
+    ? Math.min(Math.round((totalActual.value / totalPlanned.value) * 100), 100)
+    : 0
+)
 
-// Progress bar color
 const progressColor = computed(() => {
   if (usagePct.value >= 95) return 'bg-danger-500'
   if (usagePct.value >= 80) return 'bg-warning-500'
@@ -86,7 +79,7 @@ const progressColor = computed(() => {
 })
 
 function formatPHP(value: number) {
-  return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(value)
+  return formatCurrency(value, settingsStore.settings.currency)
 }
 
 function formatDate(iso: string) {
@@ -94,7 +87,7 @@ function formatDate(iso: string) {
 }
 
 function variance(item: BudgetItem) {
-  return item.planned - item.actual  // positive = under budget
+  return item.planned - item.actual
 }
 </script>
 
@@ -164,6 +157,10 @@ function variance(item: BudgetItem) {
            :class="remaining >= 0 ? 'text-secondary-700' : 'text-danger-700'">
           {{ formatPHP(remaining) }}
         </p>
+        <p class="mt-1 text-xs"
+           :class="remainingBudget >= 0 ? 'text-secondary-600' : 'text-danger-600'">
+          Budget left: {{ formatPHP(remainingBudget) }}
+        </p>
       </div>
     </div>
 
@@ -185,7 +182,7 @@ function variance(item: BudgetItem) {
           aria-valuemax="100"
         />
       </div>
-      <p class="mt-2 text-xs text-text-muted">{{ formatPHP(totalActual) }} spent of {{ formatPHP(income) }}</p>
+      <p class="mt-2 text-xs text-text-muted">{{ formatPHP(totalActual) }} of {{ formatPHP(totalPlanned) }} planned</p>
     </div>
 
     <!-- Planned vs Actual breakdown + Recent transactions -->
@@ -195,6 +192,15 @@ function variance(item: BudgetItem) {
       <div class="rounded-xl bg-surface shadow-sm border border-border overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-sm font-semibold text-text">Planned vs. Actual</h2>
+        </div>
+        <!-- Column headers -->
+        <div class="flex items-center justify-between px-5 py-2 bg-surface-alt border-b border-border text-xs font-semibold text-text-muted uppercase tracking-wide">
+          <span class="w-32">Category</span>
+          <div class="flex items-center gap-4">
+            <span class="w-24 text-right">Planned</span>
+            <span class="w-24 text-right">Actual</span>
+            <span class="w-20 text-right">Variance</span>
+          </div>
         </div>
         <div class="divide-y divide-border">
           <div
