@@ -1,14 +1,78 @@
 <script setup lang="ts">
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { Plus, Pencil, Trash2, X, Check, ChevronDown } from 'lucide-vue-next'
 import {
-  useBudgetStore, useSettingsStore,
+  useBudgetStore, useSettingsStore, useTransactionStore,
   formatCurrency,
   type BudgetItem, type Cutoff,
 } from '@/stores/counter'
+import { useAuthStore } from '@/stores/auth'
 
 const budgetStore   = useBudgetStore()
 const settingsStore = useSettingsStore()
+const transactionStore = useTransactionStore()
+const authStore     = useAuthStore()
+const budgetLoadError = ref<string | null>(null)
+
+const currentUserId = computed(() => authStore.user?.id ?? null)
+const currentUserBudgetsLoaded = computed(() =>
+  !!currentUserId.value &&
+  budgetStore.budgetsLoaded &&
+  budgetStore.budgetsUserId === currentUserId.value
+)
+const currentUserBudgetsLoading = computed(() =>
+  !!currentUserId.value &&
+  budgetStore.budgetsLoading &&
+  budgetStore.budgetsRequestedUserId === currentUserId.value
+)
+const currentUserBudgetsError = computed(() => {
+  return currentUserId.value ? budgetLoadError.value : null
+})
+const canManageBudgets = computed(() =>
+  currentUserBudgetsLoaded.value &&
+  !budgetStore.budgetsLoading &&
+  budgetStore.budgetsRequestedUserId === currentUserId.value &&
+  !currentUserBudgetsError.value
+)
+
+async function loadBudgetsForUser(userId: string): Promise<void> {
+  budgetLoadError.value = null
+  await budgetStore.loadBudgets(userId)
+  if (currentUserId.value === userId && budgetStore.budgetsError) {
+    budgetLoadError.value = budgetStore.budgetsError
+  }
+}
+
+watch(
+  currentUserId,
+  userId => {
+    budgetLoadError.value = null
+    if (!userId) return
+    if (
+      budgetStore.budgetsLoaded &&
+      budgetStore.budgetsUserId === userId &&
+      !budgetStore.budgetsLoading
+    ) return
+    void loadBudgetsForUser(userId)
+  },
+  { immediate: true },
+)
+
+function retryBudgets(): void {
+  const userId = currentUserId.value
+  if (!userId || currentUserBudgetsLoading.value) return
+  void loadBudgetsForUser(userId)
+}
+
+function cutoffOptionsFor(year: number, month: number): { label: string; value: Cutoff }[] {
+  const { cutoff1, cutoff2 } = settingsStore.settings
+  const daysInMonth = new Date(year, month, 0).getDate()
+  return [
+    { label: `Period A (1–${cutoff1})`, value: 'A' },
+    { label: `Period B (${cutoff1 + 1}–${cutoff2})`, value: 'B' },
+    { label: `Period C (${cutoff2 + 1}–${daysInMonth})`, value: 'C' },
+  ]
+}
 
 // ---------------------------------------------------------------------------
 // Form type (string inputs parsed on save)
@@ -16,7 +80,6 @@ const settingsStore = useSettingsStore()
 interface BudgetForm {
   category: string
   planned: string
-  actual: string
   cutoff: Cutoff
   month: number
   year: number
@@ -50,26 +113,66 @@ const totalPlanned = computed(() => filteredItems.value.reduce((s, i) => s + i.p
 const totalActual  = computed(() => filteredItems.value.reduce((s, i) => s + i.actual, 0))
 
 function remaining(item: BudgetItem) { return item.planned - item.actual }
+function cutoffLabel(item: BudgetItem) {
+  return cutoffOptionsFor(item.year, item.month).find(option => option.value === item.cutoff)?.label ?? `Period ${item.cutoff}`
+}
 
 // ---------------------------------------------------------------------------
 // Add / Edit modal
 // ---------------------------------------------------------------------------
 const modalOpen    = ref(false)
 const editingId    = ref<string | null>(null)
+const formSaving   = ref(false)
+const formError    = ref<string | null>(null)
 
 const emptyForm = (): BudgetForm => ({
-  category: settingsStore.expenseCategories[0] ?? '',
+  category: settingsStore.expenseCategories[0]?.name ?? '',
   planned:  '',
-  actual:   '',
-  cutoff:   15,
+  cutoff:   'A',
   month:    filterMonth.value,
   year:     filterYear.value,
 })
 
 const form = reactive<BudgetForm>(emptyForm())
-const formErrors = reactive({ category: '', planned: '', actual: '' })
+const formErrors = reactive({ category: '', planned: '' })
+
+const formActual = computed(() => {
+  const userId = currentUserId.value
+  if (
+    !userId ||
+    transactionStore.transactionsUserId !== userId ||
+    !transactionStore.transactionsLoaded
+  ) return null
+
+  const categoryId = (settingsStore.categoriesUserId === userId && settingsStore.categoriesLoaded
+    ? settingsStore.expenseCategories.find(category => category.name === form.category)?.id
+    : undefined) ?? budgetStore.items.find(
+    item => item.id === editingId.value && item.category === form.category,
+  )?.category_id
+
+  if (!categoryId) return 0
+
+  return transactionStore.items.reduce((total, transaction) =>
+    transaction.type === 'expense' &&
+    transaction.category_id === categoryId &&
+    transaction.year === form.year &&
+    transaction.month === form.month &&
+    transaction.cutoff === form.cutoff
+      ? total + transaction.amount
+      : total,
+  0)
+})
+
+const formActualDisplay = computed(() => {
+  if (formActual.value !== null) return formatPHP(formActual.value)
+  return transactionStore.transactionsLoading &&
+    transactionStore.transactionsRequestedUserId === currentUserId.value
+    ? 'Loading…'
+    : 'Unavailable'
+})
 
 function openAdd() {
+  if (formSaving.value || !canManageBudgets.value) return
   editingId.value = null
   Object.assign(form, emptyForm())
   clearErrors()
@@ -77,11 +180,11 @@ function openAdd() {
 }
 
 function openEdit(item: BudgetItem) {
+  if (formSaving.value || !canManageBudgets.value) return
   editingId.value = item.id
   Object.assign(form, {
     category: item.category,
     planned:  String(item.planned),
-    actual:   String(item.actual),
     cutoff:   item.cutoff,
     month:    item.month,
     year:     item.year,
@@ -93,7 +196,7 @@ function openEdit(item: BudgetItem) {
 function clearErrors() {
   formErrors.category = ''
   formErrors.planned  = ''
-  formErrors.actual   = ''
+  formError.value = null
 }
 
 function validate(): boolean {
@@ -103,43 +206,89 @@ function validate(): boolean {
   if (!form.planned || isNaN(Number(form.planned)) || Number(form.planned) < 0) {
     formErrors.planned = 'Enter a valid amount.'; ok = false
   }
-  if (form.actual !== '' && (isNaN(Number(form.actual)) || Number(form.actual) < 0)) {
-    formErrors.actual = 'Enter a valid amount.'; ok = false
-  }
   return ok
 }
 
-function saveForm() {
+async function saveForm(): Promise<void> {
+  if (formSaving.value) return
+  if (!canManageBudgets.value) {
+    formError.value = 'Budgets are not ready for the current user. Please wait and try again.'
+    return
+  }
   if (!validate()) return
 
   const payload: Omit<BudgetItem, 'id'> = {
     category: form.category.trim(),
     planned:  Number(form.planned),
-    actual:   form.actual === '' ? 0 : Number(form.actual),
+    actual:   formActual.value ?? 0,
     cutoff:   form.cutoff,
     month:    form.month,
     year:     form.year,
   }
 
-  if (editingId.value) {
-    budgetStore.update(editingId.value, payload)
-  } else {
-    budgetStore.add(payload)
+  formSaving.value = true
+  try {
+    const result = editingId.value
+      ? await budgetStore.update(editingId.value, payload)
+      : await budgetStore.add(payload)
+
+    if (!result.success) {
+      formError.value = result.error ?? budgetStore.budgetsError ?? 'Failed to save budget item.'
+      return
+    }
+    modalOpen.value = false
+  } catch (e) {
+    formError.value = e instanceof Error ? e.message : 'Failed to save budget item.'
+  } finally {
+    formSaving.value = false
   }
-  modalOpen.value = false
 }
 
 // ---------------------------------------------------------------------------
 // Delete confirmation
 // ---------------------------------------------------------------------------
 const deleteTarget = ref<BudgetItem | null>(null)
+const deleteSaving = ref(false)
+const deleteError = ref<string | null>(null)
 
-function confirmDelete(item: BudgetItem) { deleteTarget.value = item }
+function confirmDelete(item: BudgetItem) {
+  if (deleteSaving.value || !canManageBudgets.value) return
+  deleteError.value = null
+  deleteTarget.value = item
+}
 
-function executeDelete() {
-  if (!deleteTarget.value) return
-  budgetStore.remove(deleteTarget.value.id)
+function closeDeleteConfirmation() {
+  if (deleteSaving.value) return
   deleteTarget.value = null
+  deleteError.value = null
+}
+
+function closeForm() {
+  if (formSaving.value) return
+  modalOpen.value = false
+}
+
+async function executeDelete(): Promise<void> {
+  if (deleteSaving.value || !deleteTarget.value) return
+  if (!canManageBudgets.value) {
+    deleteError.value = 'Budgets are not ready for the current user. Please wait and try again.'
+    return
+  }
+  deleteSaving.value = true
+  deleteError.value = null
+
+  try {
+    const result = await budgetStore.remove(deleteTarget.value.id)
+    if (!result.success) {
+      deleteError.value = result.error ?? budgetStore.budgetsError ?? 'Failed to delete budget item.'
+      return
+    }
+    deleteTarget.value = null
+  } catch (e) {
+    deleteError.value = e instanceof Error ? e.message : 'Failed to delete budget item.'
+  } finally {
+    deleteSaving.value = false
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +353,7 @@ function remainingColor(item: BudgetItem) {
         <!-- Cutoff -->
         <div class="flex rounded-lg border border-border bg-surface shadow-sm overflow-hidden text-sm">
           <button
-            v-for="opt in [{ label: 'All', value: 'all' }, { label: '15th', value: 15 }, { label: '30th', value: 30 }]"
+            v-for="opt in [{ label: 'All', value: 'all' }, ...cutoffOptionsFor(filterYear, filterMonth)]"
             :key="opt.label"
             :class="[
               'px-3 py-2 font-medium transition-colors',
@@ -221,7 +370,8 @@ function remainingColor(item: BudgetItem) {
 
       <!-- Add button -->
       <button
-        class="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 transition-colors focus:outline-none focus:ring-2 focus:ring-primary-400"
+        class="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 transition-colors focus:outline-none focus:ring-2 focus:ring-primary-400 disabled:cursor-not-allowed disabled:opacity-50"
+        :disabled="!canManageBudgets"
         @click="openAdd"
       >
         <Plus :size="16" aria-hidden="true" />
@@ -230,7 +380,7 @@ function remainingColor(item: BudgetItem) {
     </div>
 
     <!-- Summary row -->
-    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+    <div v-if="currentUserBudgetsLoaded && !currentUserBudgetsLoading && !currentUserBudgetsError" class="grid grid-cols-2 gap-4 sm:grid-cols-3">
       <div class="rounded-xl bg-surface border border-border p-4 shadow-sm">
         <p class="text-xs font-medium uppercase tracking-wide text-text-muted">Total Planned</p>
         <p class="mt-1 text-xl font-bold text-text">{{ formatPHP(totalPlanned) }}</p>
@@ -253,15 +403,35 @@ function remainingColor(item: BudgetItem) {
     <!-- Budget table -->
     <div class="rounded-xl bg-surface border border-border shadow-sm overflow-hidden">
 
+      <!-- Loading and error states -->
+      <div v-if="!currentUserId" class="py-16 text-center text-sm text-text-muted" role="status">
+        Sign in to view your budgets.
+      </div>
+      <div v-else-if="currentUserBudgetsLoading || (!currentUserBudgetsLoaded && !currentUserBudgetsError)" class="py-16 text-center text-sm text-text-muted" role="status">
+        Loading budgets…
+      </div>
+      <div v-else-if="currentUserBudgetsError" class="flex flex-col items-center justify-center py-16 text-center">
+        <p class="text-sm font-medium text-danger-700">Could not load budgets</p>
+        <p class="mt-1 max-w-md text-xs text-text-muted" role="alert">{{ currentUserBudgetsError }}</p>
+        <button
+          class="mt-4 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="currentUserBudgetsLoading"
+          @click="retryBudgets"
+        >
+          Retry
+        </button>
+      </div>
+
       <!-- Empty state -->
-      <div v-if="filteredItems.length === 0" class="flex flex-col items-center justify-center py-16 text-center">
+      <div v-else-if="currentUserBudgetsLoaded && filteredItems.length === 0" class="flex flex-col items-center justify-center py-16 text-center">
         <div class="mb-3 rounded-full bg-surface-alt p-4">
           <Plus :size="24" class="text-text-subtle" aria-hidden="true" />
         </div>
         <p class="text-sm font-medium text-text">No budget items</p>
         <p class="mt-1 text-xs text-text-muted">Add a budget item to get started.</p>
         <button
-          class="mt-4 flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors"
+          class="mt-4 flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="!canManageBudgets"
           @click="openAdd"
         >
           <Plus :size="14" aria-hidden="true" /> Add Budget Item
@@ -269,7 +439,7 @@ function remainingColor(item: BudgetItem) {
       </div>
 
       <!-- Table -->
-      <table v-else class="w-full text-sm">
+      <table v-else-if="currentUserBudgetsLoaded" class="w-full text-sm">
         <thead>
           <tr class="border-b border-border bg-surface-alt text-xs font-semibold uppercase tracking-wide text-text-muted">
             <th class="px-5 py-3 text-left">Category</th>
@@ -290,7 +460,7 @@ function remainingColor(item: BudgetItem) {
             <td class="px-5 py-3 font-medium text-text">{{ item.category }}</td>
             <td class="px-4 py-3 text-text-muted hidden sm:table-cell">
               <span class="rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700">
-                {{ item.cutoff }}th
+                {{ cutoffLabel(item) }}
               </span>
             </td>
             <td class="px-4 py-3 text-right text-text-muted">{{ formatPHP(item.planned) }}</td>
@@ -312,15 +482,17 @@ function remainingColor(item: BudgetItem) {
             <td class="px-4 py-3 text-right">
               <div class="flex items-center justify-end gap-1">
                 <button
-                  class="rounded-md p-1.5 text-text-subtle hover:bg-primary-50 hover:text-primary-600 transition-colors"
+                  class="rounded-md p-1.5 text-text-subtle hover:bg-primary-50 hover:text-primary-600 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label="Edit"
+                  :disabled="!canManageBudgets"
                   @click="openEdit(item)"
                 >
                   <Pencil :size="14" aria-hidden="true" />
                 </button>
                 <button
-                  class="rounded-md p-1.5 text-text-subtle hover:bg-danger-50 hover:text-danger-600 transition-colors"
+                  class="rounded-md p-1.5 text-text-subtle hover:bg-danger-50 hover:text-danger-600 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label="Delete"
+                  :disabled="!canManageBudgets"
                   @click="confirmDelete(item)"
                 >
                   <Trash2 :size="14" aria-hidden="true" />
@@ -351,7 +523,7 @@ function remainingColor(item: BudgetItem) {
       <div
         v-if="modalOpen"
         class="fixed inset-0 z-40 flex items-center justify-center bg-neutral-900/40 p-4"
-        @click.self="modalOpen = false"
+        @click.self="closeForm"
       >
         <div class="w-full max-w-md rounded-2xl bg-surface shadow-xl border border-border">
           <!-- Modal header -->
@@ -362,7 +534,8 @@ function remainingColor(item: BudgetItem) {
             <button
               class="rounded-md p-1.5 text-text-subtle hover:bg-surface-alt hover:text-text transition-colors"
               aria-label="Close"
-              @click="modalOpen = false"
+              :disabled="formSaving"
+              @click="closeForm"
             >
               <X :size="18" aria-hidden="true" />
             </button>
@@ -384,7 +557,7 @@ function remainingColor(item: BudgetItem) {
                   ]"
                 >
                   <option value="" disabled>Select category…</option>
-                  <option v-for="c in settingsStore.expenseCategories" :key="c" :value="c">{{ c }}</option>
+                  <option v-for="c in settingsStore.expenseCategories" :key="c.id" :value="c.name">{{ c.name }}</option>
                 </select>
                 <ChevronDown :size="12" class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-text-subtle" aria-hidden="true" />
               </div>
@@ -408,21 +581,18 @@ function remainingColor(item: BudgetItem) {
               <p v-if="formErrors.planned" class="mt-1 text-xs text-danger-600">{{ formErrors.planned }}</p>
             </div>
 
-            <!-- Actual -->
+            <!-- Actual (calculated from expenses) -->
             <div>
-              <label class="mb-1 block text-xs font-medium text-text-muted" for="f-actual">Actual Amount (₱) <span class="text-text-subtle">(optional)</span></label>
+              <label class="mb-1 block text-xs font-medium text-text-muted" for="f-actual">Actual Amount (₱)</label>
               <input
                 id="f-actual"
-                v-model="form.actual"
-                type="number"
-                min="0"
-                placeholder="0"
-                :class="[
-                  'w-full rounded-lg border px-3 py-2 text-sm text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary-400',
-                  formErrors.actual ? 'border-danger-400 bg-danger-50' : 'border-border bg-surface',
-                ]"
+                :value="formActualDisplay"
+                type="text"
+                readonly
+                aria-readonly="true"
+                class="w-full cursor-default rounded-lg border border-border bg-surface-alt px-3 py-2 text-sm text-text"
               />
-              <p v-if="formErrors.actual" class="mt-1 text-xs text-danger-600">{{ formErrors.actual }}</p>
+              <p class="mt-1 text-xs text-text-subtle">Calculated from expenses for the selected category and period.</p>
             </div>
 
             <!-- Cutoff + Month + Year row -->
@@ -432,11 +602,12 @@ function remainingColor(item: BudgetItem) {
                 <div class="relative">
                   <select
                     id="f-cutoff"
-                    v-model.number="form.cutoff"
+                    v-model="form.cutoff"
                     class="w-full appearance-none rounded-lg border border-border bg-surface px-3 py-2 pr-7 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary-400"
                   >
-                    <option :value="15">15th</option>
-                    <option :value="30">30th</option>
+                    <option v-for="opt in cutoffOptionsFor(form.year, form.month)" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </option>
                   </select>
                   <ChevronDown :size="12" class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-subtle" aria-hidden="true" />
                 </div>
@@ -472,20 +643,29 @@ function remainingColor(item: BudgetItem) {
             </div>
 
             <!-- Actions -->
+            <p
+              v-if="formError"
+              class="rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700"
+              role="alert"
+            >
+              {{ formError }}
+            </p>
             <div class="flex justify-end gap-3 pt-1">
               <button
                 type="button"
                 class="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-muted hover:bg-surface-alt transition-colors"
-                @click="modalOpen = false"
+                :disabled="formSaving"
+                @click="closeForm"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                class="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors focus:outline-none focus:ring-2 focus:ring-primary-400"
+                class="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors focus:outline-none focus:ring-2 focus:ring-primary-400 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="formSaving || !canManageBudgets"
               >
                 <Check :size="14" aria-hidden="true" />
-                {{ editingId ? 'Save Changes' : 'Add Item' }}
+                {{ formSaving ? 'Saving…' : editingId ? 'Save Changes' : 'Add Item' }}
               </button>
             </div>
           </form>
@@ -500,7 +680,7 @@ function remainingColor(item: BudgetItem) {
       <div
         v-if="deleteTarget"
         class="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4"
-        @click.self="deleteTarget = null"
+        @click.self="closeDeleteConfirmation"
       >
         <div class="w-full max-w-sm rounded-2xl bg-surface shadow-xl border border-border p-6">
           <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-danger-50">
@@ -510,18 +690,27 @@ function remainingColor(item: BudgetItem) {
           <p class="mt-1 text-sm text-text-muted">
             <strong>{{ deleteTarget?.category }}</strong> will be permanently removed. This cannot be undone.
           </p>
+          <p
+            v-if="deleteError"
+            class="mt-4 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700"
+            role="alert"
+          >
+            {{ deleteError }}
+          </p>
           <div class="mt-5 flex justify-end gap-3">
             <button
-              class="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-muted hover:bg-surface-alt transition-colors"
-              @click="deleteTarget = null"
+              class="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-muted hover:bg-surface-alt transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="deleteSaving"
+              @click="closeDeleteConfirmation"
             >
               Cancel
             </button>
             <button
-              class="rounded-lg bg-danger-600 px-4 py-2 text-sm font-medium text-white hover:bg-danger-700 transition-colors"
+              class="rounded-lg bg-danger-600 px-4 py-2 text-sm font-medium text-white hover:bg-danger-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="deleteSaving || !canManageBudgets"
               @click="executeDelete"
             >
-              Delete
+              {{ deleteSaving ? 'Deleting…' : 'Delete' }}
             </button>
           </div>
         </div>

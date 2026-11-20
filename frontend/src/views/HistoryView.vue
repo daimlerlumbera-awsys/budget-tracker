@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import {
   ChevronDown, ChevronRight, ChevronUp,
   TrendingUp, TrendingDown, Wallet, CalendarDays,
@@ -7,12 +7,24 @@ import {
 } from 'lucide-vue-next'
 import {
   useTransactionStore, useBudgetStore, useSettingsStore,
-  formatCurrency, type Cutoff,
+  cutoffPeriodBounds, deriveCutoffPeriod, formatCurrency, type Cutoff,
 } from '@/stores/counter'
+import { useAuthStore } from '@/stores/auth'
 
 const store         = useTransactionStore()
 const budgetStore   = useBudgetStore()
 const settingsStore = useSettingsStore()
+const authStore     = useAuthStore()
+
+onMounted(async () => {
+  const userId = authStore.user?.id
+  if (!userId) return
+
+  if (store.transactionsUserId !== userId || !store.transactionsLoaded) {
+    if (store.transactionsLoading && store.transactionsRequestedUserId === userId) return
+    await store.loadTransactions(userId)
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,8 +36,13 @@ const MONTH_NAMES = [
 
 function periodLabel(year: number, month: number, cutoff: Cutoff): string {
   const name = MONTH_NAMES[month]
-  const start = cutoff === 15 ? 1 : 16
-  const end   = cutoff === 15 ? 15 : new Date(year, month, 0).getDate()
+  const { start, end } = cutoffPeriodBounds(
+    cutoff,
+    settingsStore.settings.cutoff1,
+    settingsStore.settings.cutoff2,
+    year,
+    month,
+  )
   return `${name} ${start}–${end}, ${year}`
 }
 
@@ -41,8 +58,14 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
 }
 
-// "Current" period — Nov 2026 15th
-const CURRENT_KEY = periodSortKey(2026, 11, 15)
+const currentKey = computed(() => {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = today.getMonth() + 1
+  const date = `${year}-${String(month).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const cutoff = deriveCutoffPeriod(date, settingsStore.settings.cutoff1, settingsStore.settings.cutoff2)
+  return periodSortKey(year, month, cutoff)
+})
 
 // ---------------------------------------------------------------------------
 // Build period summaries derived from transaction store
@@ -72,7 +95,7 @@ const periods = computed((): PeriodSummary[] => {
         key,
         year: tx.year, month: tx.month, cutoff: tx.cutoff,
         label: periodLabel(tx.year, tx.month, tx.cutoff),
-        isCurrent: key === CURRENT_KEY,
+        isCurrent: key === currentKey.value,
         income: 0, expenses: 0, remaining: 0,
         planned: 0, budgetUsagePct: 0,
       })
@@ -181,7 +204,7 @@ function usageTextColor(pct: number) {
       <!-- Cutoff -->
       <div class="flex rounded-lg border border-border bg-surface shadow-sm overflow-hidden text-sm">
         <button
-          v-for="opt in [{ label: 'All', value: 'all' }, { label: '15th', value: 15 }, { label: '30th', value: 30 }]"
+          v-for="opt in [{ label: 'All', value: 'all' }, { label: 'Period A', value: 'A' }, { label: 'Period B', value: 'B' }, { label: 'Period C', value: 'C' }]"
           :key="opt.label"
           :class="[
             'px-3 py-2 font-medium transition-colors',

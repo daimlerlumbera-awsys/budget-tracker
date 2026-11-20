@@ -11,7 +11,7 @@ import {
 } from 'lucide-vue-next'
 import {
   useTransactionStore, useBudgetStore, useSettingsStore,
-  formatCurrency, type BudgetItem,
+  cutoffPeriodBounds, deriveCutoffPeriod, formatCurrency, type BudgetItem,
 } from '@/stores/counter'
 
 const txStore       = useTransactionStore()
@@ -19,24 +19,21 @@ const budgetStore   = useBudgetStore()
 const settingsStore = useSettingsStore()
 
 // ---------------------------------------------------------------------------
-// Current period — derived from settings cutoff + most recent transaction date
+// Current period — derived from today's date and configured cutoffs
 // ---------------------------------------------------------------------------
 const currentPeriod = computed(() => {
-  const c1    = settingsStore.settings.cutoff1   // e.g. 15
-  const c2    = settingsStore.settings.cutoff2   // e.g. 30
-  // Find the latest transaction to determine active period
-  const latest = txStore.items.reduce<string | null>((max, t) => (!max || t.date > max ? t.date : max), null)
-  const ref    = latest ? new Date(latest) : new Date()
-  const year   = ref.getFullYear()
-  const month  = ref.getMonth() + 1  // 1-based
-  const day    = ref.getDate()
-  const cutoff = day <= c1 ? c1 : c2
-  const start  = cutoff === c1 ? 1 : c1 + 1
-  const end    = cutoff
-  const monthName = ref.toLocaleString('en-PH', { month: 'long' })
+  const c1    = settingsStore.settings.cutoff1
+  const c2    = settingsStore.settings.cutoff2
+  const today  = new Date()
+  const year   = today.getFullYear()
+  const month  = today.getMonth() + 1
+  const date   = `${year}-${String(month).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const cutoff = deriveCutoffPeriod(date, c1, c2)
+  const { start, end } = cutoffPeriodBounds(cutoff, c1, c2, year, month)
+  const monthName = today.toLocaleString('en-PH', { month: 'long' })
   return {
     label: `${monthName} ${start}–${end}, ${year}`,
-    cutoff: cutoff as 15 | 30,
+    cutoff,
     year,
     month,
   }
@@ -97,7 +94,7 @@ function variance(item: BudgetItem) {
     <!-- Period banner -->
     <div class="flex items-center gap-2 text-sm text-text-muted">
       <CalendarDays :size="16" class="text-primary-500" aria-hidden="true" />
-      <span>Cutoff period: <strong class="text-text font-semibold">{{ currentPeriod.label }}</strong> ({{ currentPeriod.cutoff }}th)</span>
+      <span>Cutoff period: <strong class="text-text font-semibold">{{ currentPeriod.label }}</strong> (Period {{ currentPeriod.cutoff }})</span>
     </div>
 
     <!-- Summary cards -->
