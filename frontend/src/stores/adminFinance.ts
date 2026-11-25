@@ -109,13 +109,14 @@ export const useAdminFinanceStore = defineStore('adminFinance', () => {
     usersLoading.value = true
     usersError.value = null
     try {
-      const { data, error } = await supabase
-        .rpc('admin_list_users')
-        .overrideTypes<AdminUser[]>()
+      // admin_list_users returns a set of rows; without generated DB types
+      // supabase-js can't infer that, so the result is cast here.
+      const { data, error } = await supabase.rpc('admin_list_users')
       if (generation !== _usersGeneration) return
       if (error) { usersError.value = error.message; return }
+      const rows = (Array.isArray(data) ? data : []) as AdminUser[]
       // The signed-in admin doesn't need to review their own finances
-      users.value = (data ?? []).filter(u => u.id !== adminUserId.value)
+      users.value = rows.filter(u => u.id !== adminUserId.value)
     } catch (e) {
       if (generation === _usersGeneration) usersError.value = errorMessage(e)
     } finally {
