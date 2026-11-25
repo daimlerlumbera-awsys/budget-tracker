@@ -9,9 +9,19 @@ A personal budget tracking web app for planning budgets, recording income and ex
 - **Budgets**: create, edit, and delete budget items per category.
 - **Transactions**: record and manage income and expense transactions.
 - **History**: browse past transactions and budget activity.
-- **BDO Life**: submit monthly deposits with proof-of-payment uploads. Admins can review and acknowledge submissions.
+- **BDO Life**: submit monthly deposits with proof-of-payment uploads (one deposit per month). Proofs open in an in-app preview that shows both images and PDFs. Admins can review and acknowledge submissions.
 - **Settings**: general preferences (currency, date format, theme), salary cutoff periods, budget categories, and data management.
+- **Light and dark mode**: switch themes from the header, or follow the system setting. The last theme you used is applied before the app loads, so the page doesn't flash in the wrong theme.
 - **Default data seeding**: new users get default settings (PHP currency, `MM/DD/YYYY`, system theme) and a starter set of income and expense categories.
+
+### Admin features
+
+Admin accounts get their own section and are redirected away from the personal finance pages. Regular users can't open the admin pages.
+
+- **Admin Dashboard** (`/admin`): monthly total income and expenses across all users, a per-user summary, and BDO Life submissions waiting to be acknowledged.
+- **User Finances** (`/admin/users`): read-only view of any user's income and expense transactions.
+
+User display names come from [frontend/src/data/users.ts](frontend/src/data/users.ts).
 
 ## Tech Stack
 
@@ -35,11 +45,13 @@ budget-tracker/
 │   └── src/app.js          # Express server (not yet implemented)
 └── frontend/
     └── src/
-        ├── assets/          # Global styles
+        ├── assets/          # Global styles and theme tokens
         ├── components/      # Shared UI components
+        ├── composables/     # useTheme (light/dark mode)
+        ├── data/            # User display names
         ├── layouts/         # App layout, header, sidebar
         ├── lib/supabase.ts  # Supabase client
-        ├── router/          # Routes and auth guard
+        ├── router/          # Routes, auth guard, admin/user route guards
         ├── services/        # User data seeding
         ├── stores/          # Pinia stores
         └── views/           # Pages
@@ -50,7 +62,10 @@ budget-tracker/
 ### Prerequisites
 
 - Node.js `^22.18.0` or `>=24.12.0`
-- A Supabase project with these tables: `settings`, `categories`, `budget_items`, `transactions`, `bdo_life_submissions`, and a `bdo-life-proofs` storage bucket
+- A Supabase project with:
+  - Tables: `settings`, `categories`, `budget_items`, `transactions`, `bdo_life_submissions`
+  - Storage bucket: `bdo-life-proofs`
+  - RPC functions: `is_bdo_life_admin` (admin check) and `admin_list_users` (user list for admin pages)
 
 ### Frontend setup
 
