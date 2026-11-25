@@ -47,6 +47,12 @@ const router = createRouter({
           meta: { title: 'History', requiresAuth: true },
         },
         {
+          path: 'bdo-life',
+          name: 'bdo-life',
+          component: () => import('@/views/BDOLifeView.vue'),
+          meta: { title: 'BDO Life', requiresAuth: true },
+        },
+        {
           path: 'settings',
           name: 'settings',
           component: () => import('@/views/SettingsView.vue'),

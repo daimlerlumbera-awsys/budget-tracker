@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase'
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-export type CutoffPeriod = 'A' | 'B' | 'C'
+export type CutoffPeriod = 'A' | 'B'
 export type Cutoff = CutoffPeriod
 
 export interface Transaction {
@@ -18,8 +18,8 @@ export interface Transaction {
   amount: number          // always positive; sign derived from type
   cutoff_period: CutoffPeriod
   cutoff: Cutoff          // alias of cutoff_period for period helpers
-  month: number           // 1-based, derived from date
-  year: number            // derived from date
+  month: number           // assigned period month; calendar month for expenses
+  year: number            // assigned period year
   notes?: string
 }
 
@@ -38,33 +38,78 @@ export interface BudgetItem {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Determine the cutoff period label (A/B/C) from a date and the two configured
- * cutoff end-days. Period A: day 1 → cutoff1. Period B: cutoff1+1 → cutoff2.
- * Period C: cutoff2+1 → end of month.
- */
-export function deriveCutoffPeriod(
+export function cutoffPeriodForDate(
   date: string,
-  cutoff1: number,
-  cutoff2: number,
-): CutoffPeriod {
-  const day = new Date(date).getUTCDate()
-  if (day <= cutoff1) return 'A'
-  if (day <= cutoff2) return 'B'
-  return 'C'
+  _type: 'income' | 'expense' = 'income',
+): {
+  cutoff: CutoffPeriod
+  month: number
+  year: number
+} {
+  const parsedDate = new Date(`${date}T00:00:00.000Z`)
+  const day = parsedDate.getUTCDate()
+  const month = parsedDate.getUTCMonth() + 1
+  const year = parsedDate.getUTCFullYear()
+
+  return {
+    cutoff: day >= 10 && day <= 24 ? 'A' : 'B',
+    month,
+    year,
+  }
 }
 
-export function cutoffPeriodBounds(
+export function deriveCutoffPeriod(
+  date: string,
+  type: 'income' | 'expense' = 'income',
+): CutoffPeriod {
+  return cutoffPeriodForDate(date, type).cutoff
+}
+
+export function cutoffPeriodDateRange(
   period: CutoffPeriod,
-  cutoff1: number,
-  cutoff2: number,
   year: number,
   month: number,
+  _type: 'income' | 'expense' = 'income',
+): { start: Date; end: Date } {
+  if (period === 'A') {
+    return {
+      start: new Date(Date.UTC(year, month - 1, 10)),
+      end: new Date(Date.UTC(year, month - 1, 24)),
+    }
+  }
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1)),
+    end: new Date(Date.UTC(year, month, 0)),
+  }
+}
+
+/** Returns the day-number bounds for the requested cutoff dates. */
+export function cutoffPeriodBounds(
+  period: CutoffPeriod,
+  year: number,
+  month: number,
+  type: 'income' | 'expense' = 'income',
 ): { start: number; end: number } {
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
-  if (period === 'A') return { start: 1, end: cutoff1 }
-  if (period === 'B') return { start: cutoff1 + 1, end: cutoff2 }
-  return { start: cutoff2 + 1, end: daysInMonth }
+  const { start, end } = cutoffPeriodDateRange(period, year, month, type)
+  return { start: start.getUTCDate(), end: end.getUTCDate() }
+}
+
+export function cutoffPeriodName(period: CutoffPeriod): string {
+  return period === 'A' ? '10th Cutoff' : '25th Cutoff'
+}
+
+export function formatCutoffPeriodRange(
+  period: CutoffPeriod,
+  year: number,
+  month: number,
+  _type: 'income' | 'expense' = 'income',
+): string {
+  const monthStart = new Date(Date.UTC(year, month - 1, 1))
+  const monthName = monthStart.toLocaleString('en-PH', { month: 'long', timeZone: 'UTC' })
+  if (period === 'A') return `${monthName} 10–24, ${year}`
+
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  return `${monthName} 1–9 and 25–${lastDay}, ${year}`
 }
 
 // ---------------------------------------------------------------------------
@@ -94,13 +139,13 @@ export const useTransactionStore = defineStore('transactions', () => {
     notes: string | null
     type: 'income' | 'expense'
     amount: number
-    cutoff_period: CutoffPeriod
+    cutoff_period: string
     category_id: string
     categories: { name: string } | null
   }
 
   function rowToTransaction(row: DbRow): Transaction {
-    const d = new Date(row.date)
+    const period = cutoffPeriodForDate(row.date, row.type)
     return {
       id:            row.id,
       date:          row.date,
@@ -108,10 +153,10 @@ export const useTransactionStore = defineStore('transactions', () => {
       notes:         row.notes ?? undefined,
       type:          row.type,
       amount:        row.amount,
-      cutoff_period: row.cutoff_period,
-      cutoff:        row.cutoff_period,
-      month:         d.getUTCMonth() + 1,
-      year:          d.getUTCFullYear(),
+      cutoff_period: period.cutoff,
+      cutoff:        period.cutoff,
+      month:         period.month,
+      year:          period.year,
       category_id:   row.category_id,
       category:      row.categories?.name ?? '',
     }
@@ -236,7 +281,7 @@ export const useTransactionStore = defineStore('transactions', () => {
           category_id:   payload.category_id,
           type:          payload.type,
           date:          payload.date,
-          cutoff_period: payload.cutoff_period,
+          cutoff_period: deriveCutoffPeriod(payload.date, payload.type),
           notes:         payload.notes ?? null,
         })
         .select('id, date, description, notes, type, amount, cutoff_period, category_id, categories(name)')
@@ -283,7 +328,7 @@ export const useTransactionStore = defineStore('transactions', () => {
           category_id:   payload.category_id,
           type:          payload.type,
           date:          payload.date,
-          cutoff_period: payload.cutoff_period,
+          cutoff_period: deriveCutoffPeriod(payload.date, payload.type),
           notes:         payload.notes ?? null,
         })
         .eq('id', id)
@@ -367,8 +412,6 @@ export interface AppSettings {
   currency: string
   dateFormat: string
   theme: 'light' | 'dark' | 'system'
-  cutoff1: number   // first cutoff day (maps to cutoff_a_end)
-  cutoff2: number   // second cutoff day (maps to cutoff_b_end)
 }
 
 export interface Category {
@@ -383,14 +426,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   currency:   'PHP',
   dateFormat: 'MM/DD/YYYY',
   theme:      'system',
-  cutoff1:    10,
-  cutoff2:    25,
 }
 
 // ---------------------------------------------------------------------------
 // DB key ↔ store field mapping
 // ---------------------------------------------------------------------------
-type DbKey = 'app_name' | 'currency' | 'date_format' | 'theme' | 'cutoff_a_end' | 'cutoff_b_end'
+type DbKey = 'app_name' | 'currency' | 'date_format' | 'theme'
 
 function dbRowsToSettings(rows: { key: string; value: string }[]): Partial<AppSettings> {
   const patch: Partial<AppSettings> = {}
@@ -400,8 +441,6 @@ function dbRowsToSettings(rows: { key: string; value: string }[]): Partial<AppSe
       case 'currency':     patch.currency   = value; break
       case 'date_format':  patch.dateFormat = value; break
       case 'theme':        patch.theme      = value as AppSettings['theme']; break
-      case 'cutoff_a_end': patch.cutoff1    = Number(value); break
-      case 'cutoff_b_end': patch.cutoff2    = Number(value); break
     }
   }
   return patch
@@ -416,8 +455,6 @@ function settingsPatchToRows(
   if (patch.currency   !== undefined) rows.push({ user_id: userId, key: 'currency',     value: patch.currency })
   if (patch.dateFormat !== undefined) rows.push({ user_id: userId, key: 'date_format',  value: patch.dateFormat })
   if (patch.theme      !== undefined) rows.push({ user_id: userId, key: 'theme',        value: patch.theme })
-  if (patch.cutoff1    !== undefined) rows.push({ user_id: userId, key: 'cutoff_a_end', value: String(patch.cutoff1) })
-  if (patch.cutoff2    !== undefined) rows.push({ user_id: userId, key: 'cutoff_b_end', value: String(patch.cutoff2) })
   return rows
 }
 
@@ -700,7 +737,8 @@ export const useBudgetStore = defineStore('budgets', () => {
 
     for (const transaction of transactions) {
       if (transaction.type !== 'expense') continue
-      const key = `${transaction.category_id}:${transaction.year}:${transaction.month}:${transaction.cutoff}`
+      const period = cutoffPeriodForDate(transaction.date, 'expense')
+      const key = `${transaction.category_id}:${period.year}:${period.month}:${period.cutoff}`
       expenseTotals.set(key, (expenseTotals.get(key) ?? 0) + transaction.amount)
     }
 
@@ -716,22 +754,24 @@ export const useBudgetStore = defineStore('budgets', () => {
     id: string
     user_id: string
     category_id: string
-    amount: number
+    planned: number
     month: number
     year: number
-    cutoff_period: CutoffPeriod
+    cutoff_period: CutoffPeriod | 'C'
     categories: { name: string } | null
   }
 
   function rowToBudget(row: DbRow): BudgetPlan {
+    const legacyPeriodC = row.cutoff_period === 'C'
+    const nextMonth = legacyPeriodC ? new Date(Date.UTC(row.year, row.month, 1)) : null
     return {
       id: row.id,
       category_id: row.category_id,
       category: row.categories?.name ?? '',
-      planned: row.amount,
-      cutoff: row.cutoff_period,
-      month: row.month,
-      year: row.year,
+      planned: row.planned,
+      cutoff: row.cutoff_period === 'C' ? 'B' : row.cutoff_period,
+      month: nextMonth ? nextMonth.getUTCMonth() + 1 : row.month,
+      year: nextMonth ? nextMonth.getUTCFullYear() : row.year,
     }
   }
 
@@ -792,13 +832,21 @@ export const useBudgetStore = defineStore('budgets', () => {
     }
   }
 
-  function loadBudgets(userId: string): Promise<void> {
+  function loadBudgets(userId: string, refresh = false): Promise<void> {
     if (_budgetLoadPromise && _budgetLoadPromiseUserId === userId) {
       return _budgetLoadPromise
     }
 
+    if (
+      (_budgetLoadPromise && _budgetLoadPromiseUserId !== userId) ||
+      (budgetsRequestedUserId.value !== null && budgetsRequestedUserId.value !== userId) ||
+      (budgetsUserId.value !== null && budgetsUserId.value !== userId)
+    ) {
+      clearBudgets()
+    }
+
     const requestGeneration = _budgetGeneration
-    const promise = loadBudgetsAfterMutations(userId, requestGeneration)
+    const promise = loadBudgetsAfterMutations(userId, requestGeneration, refresh)
     _budgetLoadPromise = promise
     _budgetLoadPromiseUserId = userId
     void promise.then(() => {
@@ -818,6 +866,7 @@ export const useBudgetStore = defineStore('budgets', () => {
   async function loadBudgetsAfterMutations(
     userId: string,
     requestGeneration: number,
+    refresh: boolean,
   ): Promise<void> {
     try {
       while (true) {
@@ -837,6 +886,13 @@ export const useBudgetStore = defineStore('budgets', () => {
           return
         }
         if (_budgetMutationsInFlight > 0) continue
+        if (
+          !refresh &&
+          budgetsLoaded.value &&
+          !budgetsLoading.value &&
+          budgetsRequestedUserId.value === userId &&
+          budgetsUserId.value === userId
+        ) return
 
         await performBudgetLoad(userId)
         return
@@ -862,7 +918,7 @@ export const useBudgetStore = defineStore('budgets', () => {
     try {
       const { data, error } = await supabase
         .from('budget_items')
-        .select('id, user_id, category_id, amount, month, year, cutoff_period, categories(name)')
+        .select('id, user_id, category_id, planned, month, year, cutoff_period, categories(name)')
         .eq('user_id', userId)
         .order('year', { ascending: false })
         .order('month', { ascending: false })
@@ -996,6 +1052,22 @@ export const useBudgetStore = defineStore('budgets', () => {
     return items.value.filter(b => b.year === year && b.month === month && b.cutoff === cutoff)
   }
 
+  function hasBudgetPlan(
+    categoryId: string,
+    cutoff: Cutoff,
+    month: number,
+    year: number,
+    excludingId?: string,
+  ): boolean {
+    return plans.value.some(plan =>
+      plan.id !== excludingId &&
+      plan.category_id === categoryId &&
+      plan.cutoff === cutoff &&
+      plan.month === month &&
+      plan.year === year,
+    )
+  }
+
   async function add(
     item: Omit<BudgetItem, 'id'>,
     userId?: string,
@@ -1007,18 +1079,23 @@ export const useBudgetStore = defineStore('budgets', () => {
       const categoryId = await resolveCategoryId(item, owner.userId)
       const currentOwner = await verifyBudgetOwner(owner.userId, owner.generation)
       if (!currentOwner.current) throw new Error(currentOwner.error)
+      if (hasBudgetPlan(categoryId, item.cutoff, item.month, item.year)) {
+        const message = 'A budget plan already exists for this category and period. Edit the existing plan instead.'
+        if (generation === _budgetGeneration) budgetsError.value = message
+        return { success: false, error: message }
+      }
 
       const { data, error } = await supabase
         .from('budget_items')
         .insert({
           user_id: owner.userId,
           category_id: categoryId,
-          amount: item.planned,
+          planned: item.planned,
           month: item.month,
           year: item.year,
           cutoff_period: item.cutoff,
         })
-        .select('id, user_id, category_id, amount, month, year, cutoff_period, categories(name)')
+        .select('id, user_id, category_id, planned, month, year, cutoff_period, categories(name)')
         .single()
         .overrideTypes<DbRow>()
 
@@ -1060,19 +1137,22 @@ export const useBudgetStore = defineStore('budgets', () => {
       const categoryId = await resolveCategoryId(categoryInput, owner.userId)
       const currentOwner = await verifyBudgetOwner(owner.userId, owner.generation)
       if (!currentOwner.current) throw new Error(currentOwner.error)
+      if (hasBudgetPlan(categoryId, item.cutoff, item.month, item.year, id)) {
+        throw new Error('A budget plan already exists for this category and period. Edit the existing plan instead.')
+      }
 
       const { data, error } = await supabase
         .from('budget_items')
         .update({
           category_id: categoryId,
-          amount: item.planned,
+          planned: item.planned,
           month: item.month,
           year: item.year,
           cutoff_period: item.cutoff,
         })
         .eq('id', id)
         .eq('user_id', owner.userId)
-        .select('id, user_id, category_id, amount, month, year, cutoff_period, categories(name)')
+        .select('id, user_id, category_id, planned, month, year, cutoff_period, categories(name)')
         .overrideTypes<DbRow[]>()
 
       const verifiedOwner = await verifyBudgetOwner(owner.userId, owner.generation)

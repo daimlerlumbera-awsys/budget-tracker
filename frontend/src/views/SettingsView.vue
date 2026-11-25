@@ -74,59 +74,6 @@ function cancelGeneral() {
 }
 
 // ---------------------------------------------------------------------------
-// Section 2 — Salary Cutoff Settings
-// ---------------------------------------------------------------------------
-const cutoffForm = reactive({ cutoff1: settingsStore.settings.cutoff1, cutoff2: settingsStore.settings.cutoff2 })
-const cutoffErrors = reactive({ cutoff1: '', cutoff2: '' })
-
-watch(() => settingsStore.settings, (s) => {
-  cutoffForm.cutoff1 = s.cutoff1
-  cutoffForm.cutoff2 = s.cutoff2
-}, { deep: true })
-
-function validateCutoff(): boolean {
-  cutoffErrors.cutoff1 = ''
-  cutoffErrors.cutoff2 = ''
-  let ok = true
-  const c1 = Number(cutoffForm.cutoff1)
-  const c2 = Number(cutoffForm.cutoff2)
-  if (!Number.isInteger(c1) || c1 < 1 || c1 > 28) {
-    cutoffErrors.cutoff1 = 'Must be 1–28.'; ok = false
-  }
-  if (!Number.isInteger(c2) || c2 < 1 || c2 > 31) {
-    cutoffErrors.cutoff2 = 'Must be 1–31.'; ok = false
-  }
-  if (ok && c1 >= c2) {
-    cutoffErrors.cutoff2 = 'Second cutoff must be after the first.'; ok = false
-  }
-  return ok
-}
-
-const cutoffPreview = computed(() => {
-  const c1 = Number(cutoffForm.cutoff1)
-  const c2 = Number(cutoffForm.cutoff2)
-  if (!c1 || !c2 || c1 >= c2) return []
-  return [
-    { label: 'Period A', range: `1st – ${c1}th` },
-    { label: 'Period B', range: `${c1 + 1}st – ${c2}th` },
-  ]
-})
-
-async function saveCutoff() {
-  if (settingsLoadFailed.value) return
-  if (!validateCutoff()) return
-  await settingsStore.saveSettings(
-    { cutoff1: Number(cutoffForm.cutoff1), cutoff2: Number(cutoffForm.cutoff2) },
-    authStore.user?.id,
-  )
-  if (settingsStore.settingsError) {
-    showToast(settingsStore.settingsError, 'error')
-  } else {
-    showToast('Cutoff settings saved.')
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Section 3 — Budget Categories
 // ---------------------------------------------------------------------------
 const newCategoryName  = ref('')
@@ -362,90 +309,18 @@ function resetData() {
     <!-- ------------------------------------------------------------------ -->
     <section class="rounded-xl bg-surface border border-border shadow-sm overflow-hidden">
       <div class="px-6 py-4 border-b border-border bg-surface-alt">
-        <h2 class="text-sm font-semibold text-text">Salary Cutoff Settings</h2>
-        <p class="text-xs text-text-muted mt-0.5">Define your two monthly payroll cutoff days.</p>
+        <h2 class="text-sm font-semibold text-text">Salary Cutoff Periods</h2>
+        <p class="text-xs text-text-muted mt-0.5">Monthly periods use fixed day ranges.</p>
       </div>
-      <div class="px-6 py-5 space-y-4">
-
-        <!-- Loading skeleton -->
-        <div v-if="settingsStore.settingsLoading && !settingsStore.settingsLoaded" class="space-y-3 py-1" aria-busy="true" aria-label="Loading settings">
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-1">
-              <div class="h-3 w-24 rounded bg-neutral-200 animate-pulse" />
-              <div class="h-9 rounded-lg bg-neutral-200 animate-pulse" />
-            </div>
-            <div class="space-y-1">
-              <div class="h-3 w-24 rounded bg-neutral-200 animate-pulse" />
-              <div class="h-9 rounded-lg bg-neutral-200 animate-pulse" />
-            </div>
-          </div>
-          <div class="flex justify-end pt-2 border-t border-border">
-            <div class="h-9 w-16 rounded-lg bg-neutral-200 animate-pulse" />
-          </div>
+      <div class="grid grid-cols-2 gap-4 px-6 py-5">
+        <div class="rounded-lg bg-surface-alt border border-border p-3">
+          <p class="text-xs font-medium text-text-muted">10th Cutoff</p>
+          <p class="mt-1 text-sm font-semibold text-text">For the selected expense month, include expenses dated 10th–24th</p>
         </div>
-
-        <!-- Form — shown once loaded -->
-        <template v-else-if="settingsStore.settingsLoaded">
-
-          <div class="grid grid-cols-2 gap-4">
-            <!-- Cutoff 1 -->
-            <div>
-              <label class="mb-1 block text-xs font-medium text-text-muted" for="c-cut1">First Cutoff Day</label>
-              <input
-                id="c-cut1"
-                v-model.number="cutoffForm.cutoff1"
-                type="number"
-                min="1"
-                max="28"
-                :disabled="settingsLoadFailed"
-                :class="[
-                  'w-full rounded-lg border px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary-400 disabled:opacity-50 disabled:cursor-not-allowed',
-                  cutoffErrors.cutoff1 ? 'border-danger-400 bg-danger-50' : 'border-border bg-bg',
-                ]"
-              />
-              <p v-if="cutoffErrors.cutoff1" class="mt-1 text-xs text-danger-600">{{ cutoffErrors.cutoff1 }}</p>
-            </div>
-            <!-- Cutoff 2 -->
-            <div>
-              <label class="mb-1 block text-xs font-medium text-text-muted" for="c-cut2">Second Cutoff Day</label>
-              <input
-                id="c-cut2"
-                v-model.number="cutoffForm.cutoff2"
-                type="number"
-                min="1"
-                max="31"
-                :disabled="settingsLoadFailed"
-                :class="[
-                  'w-full rounded-lg border px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary-400 disabled:opacity-50 disabled:cursor-not-allowed',
-                  cutoffErrors.cutoff2 ? 'border-danger-400 bg-danger-50' : 'border-border bg-bg',
-                ]"
-              />
-              <p v-if="cutoffErrors.cutoff2" class="mt-1 text-xs text-danger-600">{{ cutoffErrors.cutoff2 }}</p>
-            </div>
-          </div>
-
-          <!-- Preview -->
-          <div v-if="cutoffPreview.length" class="rounded-lg bg-surface-alt border border-border p-3 space-y-1">
-            <p class="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Period Preview</p>
-            <div v-for="p in cutoffPreview" :key="p.label" class="flex items-center justify-between text-sm">
-              <span class="text-text-muted">{{ p.label }}</span>
-              <span class="font-medium text-text">{{ p.range }}</span>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="flex justify-end pt-2 border-t border-border">
-            <button
-              type="button"
-              class="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              :disabled="settingsStore.settingsLoading || settingsLoadFailed"
-              @click="saveCutoff"
-            >
-              <Save :size="14" aria-hidden="true" /> {{ settingsStore.settingsLoading ? 'Saving…' : 'Save' }}
-            </button>
-          </div>
-
-        </template>
+        <div class="rounded-lg bg-surface-alt border border-border p-3">
+          <p class="text-xs font-medium text-text-muted">25th Cutoff</p>
+          <p class="mt-1 text-sm font-semibold text-text">For the selected expense month, include expenses dated 1st–9th and 25th–end</p>
+        </div>
       </div>
     </section>
 

@@ -7,7 +7,7 @@ import {
 } from 'lucide-vue-next'
 import {
   useTransactionStore, useBudgetStore, useSettingsStore,
-  cutoffPeriodBounds, deriveCutoffPeriod, formatCurrency, type Cutoff,
+  cutoffPeriodForDate, cutoffPeriodName, formatCutoffPeriodRange, formatCurrency, type Cutoff,
 } from '@/stores/counter'
 import { useAuthStore } from '@/stores/auth'
 
@@ -29,21 +29,8 @@ onMounted(async () => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const MONTH_NAMES = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
-
 function periodLabel(year: number, month: number, cutoff: Cutoff): string {
-  const name = MONTH_NAMES[month]
-  const { start, end } = cutoffPeriodBounds(
-    cutoff,
-    settingsStore.settings.cutoff1,
-    settingsStore.settings.cutoff2,
-    year,
-    month,
-  )
-  return `${name} ${start}–${end}, ${year}`
+  return `${cutoffPeriodName(cutoff)} (${formatCutoffPeriodRange(cutoff, year, month, 'expense')})`
 }
 
 function periodSortKey(year: number, month: number, cutoff: Cutoff): string {
@@ -63,8 +50,8 @@ const currentKey = computed(() => {
   const year = today.getFullYear()
   const month = today.getMonth() + 1
   const date = `${year}-${String(month).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  const cutoff = deriveCutoffPeriod(date, settingsStore.settings.cutoff1, settingsStore.settings.cutoff2)
-  return periodSortKey(year, month, cutoff)
+  const period = cutoffPeriodForDate(date, 'expense')
+  return periodSortKey(period.year, period.month, period.cutoff)
 })
 
 // ---------------------------------------------------------------------------
@@ -204,7 +191,7 @@ function usageTextColor(pct: number) {
       <!-- Cutoff -->
       <div class="flex rounded-lg border border-border bg-surface shadow-sm overflow-hidden text-sm">
         <button
-          v-for="opt in [{ label: 'All', value: 'all' }, { label: 'Period A', value: 'A' }, { label: 'Period B', value: 'B' }, { label: 'Period C', value: 'C' }]"
+          v-for="opt in [{ label: 'All', value: 'all' }, { label: '10th Cutoff', value: 'A' }, { label: '25th Cutoff', value: 'B' }]"
           :key="opt.label"
           :class="[
             'px-3 py-2 font-medium transition-colors',

@@ -5,6 +5,7 @@ import {
   Wallet,
   ArrowLeftRight,
   History,
+  ShieldCheck,
   Settings,
   X,
 } from 'lucide-vue-next'
@@ -19,6 +20,7 @@ const navItems = [
   { label: 'Budgets',      to: '/budgets',      icon: Wallet },
   { label: 'Transactions', to: '/transactions', icon: ArrowLeftRight },
   { label: 'History',      to: '/history',      icon: History },
+  { label: 'BDO Life',     to: '/bdo-life',     icon: ShieldCheck },
   { label: 'Settings',     to: '/settings',     icon: Settings },
 ]
 

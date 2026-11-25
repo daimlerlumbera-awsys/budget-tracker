@@ -6,7 +6,8 @@ import {
   Wallet, X,
 } from 'lucide-vue-next'
 import {
-  deriveCutoffPeriod, formatCurrency, useSettingsStore, useTransactionStore,
+  cutoffPeriodForDate, cutoffPeriodName, deriveCutoffPeriod,
+  formatCutoffPeriodRange, formatCurrency, useSettingsStore, useTransactionStore,
   type CutoffPeriod, type Transaction,
 } from '@/stores/counter'
 import { useAuthStore } from '@/stores/auth'
@@ -137,10 +138,13 @@ const summaryExpenses = computed(() =>
 
 const summaryNet = computed(() => summaryIncome.value - summaryExpenses.value)
 
-const previewCutoff = computed(() => form.date
-  ? deriveCutoffPeriod(form.date, settingsStore.settings.cutoff1, settingsStore.settings.cutoff2)
-  : null
-)
+const previewCutoff = computed(() => form.date ? cutoffPeriodForDate(form.date, form.type) : null)
+const previewCutoffLabel = computed(() => {
+  const period = previewCutoff.value
+  return period
+    ? `${cutoffPeriodName(period.cutoff)} (${formatCutoffPeriodRange(period.cutoff, period.year, period.month, form.type)})`
+    : 'Select a date'
+})
 
 watch(
   () => authStore.user?.id,
@@ -221,6 +225,15 @@ function formatDate(date: string): string {
   })
 }
 
+function cutoffLabel(transaction: Transaction): string {
+  return `${cutoffPeriodName(transaction.cutoff)} (${formatCutoffPeriodRange(
+    transaction.cutoff,
+    transaction.year,
+    transaction.month,
+    transaction.type,
+  )})`
+}
+
 function resetFilters(): void {
   search.value = ''
   filterType.value = 'all'
@@ -298,11 +311,7 @@ async function saveTransaction(): Promise<void> {
     category_id: form.category_id,
     type: form.type,
     date: form.date,
-    cutoff_period: deriveCutoffPeriod(
-      form.date,
-      settingsStore.settings.cutoff1,
-      settingsStore.settings.cutoff2,
-    ),
+    cutoff_period: deriveCutoffPeriod(form.date, form.type),
     notes: form.notes.trim() || undefined,
   }
 
@@ -493,9 +502,8 @@ function retryLoad(): void {
             class="w-full appearance-none rounded-lg border border-border bg-bg px-3 py-2 pr-8 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary-400"
           >
             <option value="all">All periods</option>
-            <option value="A">Period A</option>
-            <option value="B">Period B</option>
-            <option value="C">Period C</option>
+            <option value="A">10th Cutoff</option>
+            <option value="B">25th Cutoff</option>
           </select>
           <ChevronDown :size="13" class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-text-subtle" aria-hidden="true" />
         </label>
@@ -608,7 +616,7 @@ function retryLoad(): void {
               <td class="whitespace-nowrap px-4 py-3 text-text-muted">{{ formatDate(transaction.date) }}</td>
               <td class="px-4 py-3">
                 <span class="rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700">
-                  Period {{ transaction.cutoff_period }}
+                  {{ cutoffLabel(transaction) }}
                 </span>
               </td>
               <td
@@ -752,7 +760,7 @@ function retryLoad(): void {
             <span>
               Cutoff period:
               <strong class="font-semibold text-text">
-                {{ previewCutoff ? `Period ${previewCutoff}` : 'Select a date' }}
+                {{ previewCutoffLabel }}
               </strong>
             </span>
           </div>

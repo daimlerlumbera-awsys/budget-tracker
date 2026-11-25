@@ -9,8 +9,6 @@ const DEFAULT_SETTINGS: { key: string; value: string }[] = [
   { key: 'currency',    value: 'PHP'            },
   { key: 'date_format', value: 'MM/DD/YYYY'     },
   { key: 'theme',       value: 'system'         },
-  { key: 'cutoff_a_end', value: '10'            },
-  { key: 'cutoff_b_end', value: '25'            },
 ]
 
 const DEFAULT_CATEGORIES: { name: string; type: 'income' | 'expense' }[] = [

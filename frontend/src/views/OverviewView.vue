@@ -11,7 +11,7 @@ import {
 } from 'lucide-vue-next'
 import {
   useTransactionStore, useBudgetStore, useSettingsStore,
-  cutoffPeriodBounds, deriveCutoffPeriod, formatCurrency, type BudgetItem,
+  cutoffPeriodForDate, cutoffPeriodName, formatCutoffPeriodRange, formatCurrency, type BudgetItem,
 } from '@/stores/counter'
 
 const txStore       = useTransactionStore()
@@ -19,23 +19,15 @@ const budgetStore   = useBudgetStore()
 const settingsStore = useSettingsStore()
 
 // ---------------------------------------------------------------------------
-// Current period — derived from today's date and configured cutoffs
+// Current payroll cutoff — derived from today's date
 // ---------------------------------------------------------------------------
 const currentPeriod = computed(() => {
-  const c1    = settingsStore.settings.cutoff1
-  const c2    = settingsStore.settings.cutoff2
   const today  = new Date()
-  const year   = today.getFullYear()
-  const month  = today.getMonth() + 1
-  const date   = `${year}-${String(month).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  const cutoff = deriveCutoffPeriod(date, c1, c2)
-  const { start, end } = cutoffPeriodBounds(cutoff, c1, c2, year, month)
-  const monthName = today.toLocaleString('en-PH', { month: 'long' })
+  const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const period = cutoffPeriodForDate(date, 'expense')
   return {
-    label: `${monthName} ${start}–${end}, ${year}`,
-    cutoff,
-    year,
-    month,
+    label: `${cutoffPeriodName(period.cutoff)} (${formatCutoffPeriodRange(period.cutoff, period.year, period.month, 'expense')})`,
+    ...period,
   }
 })
 
@@ -94,7 +86,7 @@ function variance(item: BudgetItem) {
     <!-- Period banner -->
     <div class="flex items-center gap-2 text-sm text-text-muted">
       <CalendarDays :size="16" class="text-primary-500" aria-hidden="true" />
-      <span>Cutoff period: <strong class="text-text font-semibold">{{ currentPeriod.label }}</strong> (Period {{ currentPeriod.cutoff }})</span>
+      <span>Cutoff period: <strong class="text-text font-semibold">{{ currentPeriod.label }}</strong></span>
     </div>
 
     <!-- Summary cards -->

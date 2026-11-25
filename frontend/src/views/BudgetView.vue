@@ -3,7 +3,7 @@ import { ref, computed, reactive, watch } from 'vue'
 import { Plus, Pencil, Trash2, X, Check, ChevronDown } from 'lucide-vue-next'
 import {
   useBudgetStore, useSettingsStore, useTransactionStore,
-  formatCurrency,
+  cutoffPeriodForDate, cutoffPeriodName, formatCutoffPeriodRange, formatCurrency,
   type BudgetItem, type Cutoff,
 } from '@/stores/counter'
 import { useAuthStore } from '@/stores/auth'
@@ -65,12 +65,9 @@ function retryBudgets(): void {
 }
 
 function cutoffOptionsFor(year: number, month: number): { label: string; value: Cutoff }[] {
-  const { cutoff1, cutoff2 } = settingsStore.settings
-  const daysInMonth = new Date(year, month, 0).getDate()
   return [
-    { label: `Period A (1–${cutoff1})`, value: 'A' },
-    { label: `Period B (${cutoff1 + 1}–${cutoff2})`, value: 'B' },
-    { label: `Period C (${cutoff2 + 1}–${daysInMonth})`, value: 'C' },
+    { label: `${cutoffPeriodName('A')} (${formatCutoffPeriodRange('A', year, month, 'expense')})`, value: 'A' },
+    { label: `${cutoffPeriodName('B')} (${formatCutoffPeriodRange('B', year, month, 'expense')})`, value: 'B' },
   ]
 }
 
@@ -110,11 +107,25 @@ const filteredItems = computed(() =>
 )
 
 const totalPlanned = computed(() => filteredItems.value.reduce((s, i) => s + i.planned, 0))
-const totalActual  = computed(() => filteredItems.value.reduce((s, i) => s + i.actual, 0))
+const totalActual = computed(() => {
+  const userId = currentUserId.value
+  if (!userId || transactionStore.transactionsUserId !== userId) return 0
+
+  return transactionStore.items.reduce((total, transaction) => {
+    if (transaction.type !== 'expense') return total
+    const period = cutoffPeriodForDate(transaction.date, 'expense')
+    if (
+      period.year !== filterYear.value ||
+      period.month !== filterMonth.value ||
+      (filterCutoff.value !== 'all' && period.cutoff !== filterCutoff.value)
+    ) return total
+    return total + transaction.amount
+  }, 0)
+})
 
 function remaining(item: BudgetItem) { return item.planned - item.actual }
 function cutoffLabel(item: BudgetItem) {
-  return cutoffOptionsFor(item.year, item.month).find(option => option.value === item.cutoff)?.label ?? `Period ${item.cutoff}`
+  return cutoffOptionsFor(item.year, item.month).find(option => option.value === item.cutoff)?.label ?? cutoffPeriodName(item.cutoff)
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +231,7 @@ async function saveForm(): Promise<void> {
   const payload: Omit<BudgetItem, 'id'> = {
     category: form.category.trim(),
     planned:  Number(form.planned),
-    actual:   formActual.value ?? 0,
+    actual:   0,
     cutoff:   form.cutoff,
     month:    form.month,
     year:     form.year,
