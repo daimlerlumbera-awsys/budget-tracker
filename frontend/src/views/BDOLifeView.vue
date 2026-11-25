@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Check, FileText, RefreshCw, ShieldCheck, Upload, Wallet } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Check, Eye, FileText, RefreshCw, ShieldCheck, Wallet, Upload, X } from 'lucide-vue-next'
 import { useBdoLifeStore, type BdoLifeSubmission } from '../stores/bdoLife'
+import { userDisplayName } from '@/data/users'
 
 const store = useBdoLifeStore()
 const amount = ref<number | null>(null)
 const proofFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const formError = ref<string | null>(null)
-const proofUrlById = ref<Record<string, string>>({})
 const proofLoadingId = ref<string | null>(null)
+const proofError = ref<string | null>(null)
+const proofPreview = ref<{ url: string; mime: string; submission: BdoLifeSubmission } | null>(null)
+const proofIsImage = computed(() => proofPreview.value?.mime.startsWith('image/') ?? false)
+const proofIsPdf = computed(() => proofPreview.value?.mime === 'application/pdf')
 const DUPLICATE_SUBMISSION_MESSAGE = "You have already deposited for this month's BDO Life."
 
 function singaporeMonthKey(date: Date): string {
@@ -90,12 +94,42 @@ function acknowledgmentLabel(submission: BdoLifeSubmission): string {
 
 async function loadProof(submission: BdoLifeSubmission): Promise<void> {
   proofLoadingId.value = submission.id
-  const result = await store.createProofSignedUrl(submission.proof_path)
-  if (result.success) {
-    proofUrlById.value[submission.id] = result.url
+  proofError.value = null
+  try {
+    const result = await store.createProofSignedUrl(submission.proof_path)
+    if (!result.success) return
+    // Fetch as a blob so the preview works after the signed URL expires
+    // and so the file type can be detected for rendering.
+    const response = await fetch(result.url)
+    if (!response.ok) throw new Error(`Could not load the proof (HTTP ${response.status}).`)
+    const blob = await response.blob()
+    closeProof()
+    proofPreview.value = {
+      url: URL.createObjectURL(blob),
+      mime: blob.type,
+      submission,
+    }
+  } catch (e) {
+    proofError.value = e instanceof Error ? e.message : 'Could not load the proof.'
+  } finally {
+    proofLoadingId.value = null
   }
-  proofLoadingId.value = null
 }
+
+function closeProof(): void {
+  if (proofPreview.value) URL.revokeObjectURL(proofPreview.value.url)
+  proofPreview.value = null
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && proofPreview.value) closeProof()
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  closeProof()
+})
 
 async function acknowledge(submission: BdoLifeSubmission): Promise<void> {
   await store.acknowledgeSubmission(submission.id)
@@ -123,6 +157,13 @@ async function acknowledge(submission: BdoLifeSubmission): Promise<void> {
       role="alert"
     >
       {{ store.error }}
+    </div>
+    <div
+      v-if="proofError"
+      class="rounded-lg border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-700"
+      role="alert"
+    >
+      {{ proofError }}
     </div>
     <div
       v-if="formError"
@@ -202,8 +243,8 @@ async function acknowledge(submission: BdoLifeSubmission): Promise<void> {
             </thead>
             <tbody class="divide-y divide-border">
               <tr v-for="submission in store.submissions" :key="submission.id" class="hover:bg-surface-alt">
-                <td class="max-w-56 truncate px-4 py-3 font-mono text-xs text-text-muted" :title="submission.user_id">
-                  {{ submission.user_id }}
+                <td class="max-w-56 truncate px-4 py-3 font-medium text-text" :title="submission.user_id">
+                  {{ userDisplayName(submission.user_id) }}
                 </td>
                 <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-text">
                   {{ formatAmount(submission.amount) }}
@@ -223,24 +264,14 @@ async function acknowledge(submission: BdoLifeSubmission): Promise<void> {
                   </span>
                 </td>
                 <td class="px-4 py-3">
-                  <a
-                    v-if="proofUrlById[submission.id]"
-                    :href="proofUrlById[submission.id]"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="text-xs font-medium text-primary-600 hover:text-primary-700"
-                  >
-                    Open proof
-                  </a>
                   <button
-                    v-else
                     class="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 disabled:opacity-50"
                     :disabled="proofLoadingId === submission.id"
                     @click="loadProof(submission)"
                   >
-                    <span v-if="proofLoadingId === submission.id">Preparing…</span>
+                    <span v-if="proofLoadingId === submission.id">Loading…</span>
                     <template v-else>
-                      <Upload :size="13" aria-hidden="true" />
+                      <Eye :size="13" aria-hidden="true" />
                       View proof
                     </template>
                   </button>
@@ -251,7 +282,7 @@ async function acknowledge(submission: BdoLifeSubmission): Promise<void> {
                     :disabled="!!submission.acknowledged_at || store.acknowledgingId === submission.id"
                     @click="acknowledge(submission)"
                   >
-                    {{ store.acknowledgingId === submission.id ? 'Recording…' : 'Okay, I see the proof.' }}
+                    {{ store.acknowledgingId === submission.id ? 'Recording…' : 'Acknowledged' }}
                   </button>
                 </td>
               </tr>
@@ -375,5 +406,70 @@ async function acknowledge(submission: BdoLifeSubmission): Promise<void> {
         </div>
       </section>
     </template>
+
+    <!-- Proof preview modal -->
+    <Transition name="fade">
+      <div
+        v-if="proofPreview"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/60 p-4"
+        @click.self="closeProof"
+      >
+        <div
+          class="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="proof-title"
+        >
+          <div class="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+            <div class="min-w-0">
+              <h2 id="proof-title" class="text-base font-semibold text-text">Proof of deposit</h2>
+              <p class="truncate text-xs text-text-muted">
+                {{ userDisplayName(proofPreview.submission.user_id) }} ·
+                {{ formatAmount(proofPreview.submission.amount) }} ·
+                {{ formatTimestamp(proofPreview.submission.submitted_at) }}
+              </p>
+            </div>
+            <button
+              class="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface-alt hover:text-text"
+              aria-label="Close proof preview"
+              @click="closeProof"
+            >
+              <X :size="18" aria-hidden="true" />
+            </button>
+          </div>
+
+          <div class="flex flex-1 items-center justify-center overflow-auto bg-surface-alt p-4">
+            <img
+              v-if="proofIsImage"
+              :src="proofPreview.url"
+              alt="Proof of deposit"
+              class="max-h-[75vh] max-w-full rounded-lg object-contain"
+            />
+            <iframe
+              v-else-if="proofIsPdf"
+              :src="proofPreview.url"
+              title="Proof of deposit"
+              class="h-[75vh] w-full rounded-lg border border-border bg-white"
+            />
+            <div v-else class="py-10 text-center">
+              <FileText :size="24" class="mx-auto mb-2 text-text-subtle" aria-hidden="true" />
+              <p class="text-sm text-text-muted">This file type can't be previewed.</p>
+              <a
+                :href="proofPreview.url"
+                download="proof-of-deposit"
+                class="mt-3 inline-block text-sm font-medium text-primary-600 hover:text-primary-700"
+              >Download file</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
+
+<style scoped>
+.fade-enter-active,
+.fade-leave-active { transition: opacity 0.15s ease; }
+.fade-enter-from,
+.fade-leave-to     { opacity: 0; }
+</style>

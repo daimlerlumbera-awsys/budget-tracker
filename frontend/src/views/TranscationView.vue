@@ -460,7 +460,7 @@ function retryLoad(): void {
       >
         <div class="flex items-start justify-between">
           <p class="text-xs font-medium uppercase tracking-wide text-text-muted">Net</p>
-          <span class="rounded-full bg-white/70 p-1.5">
+          <span class="rounded-full bg-surface/70 p-1.5">
             <Wallet :size="14" :class="summaryNet >= 0 ? 'text-secondary-600' : 'text-danger-600'" aria-hidden="true" />
           </span>
         </div>
@@ -677,7 +677,7 @@ function retryLoad(): void {
               type="button"
               :class="[
                 'rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                form.type === 'expense' ? 'bg-white text-danger-700 shadow-sm' : 'text-text-muted hover:text-text',
+                form.type === 'expense' ? 'bg-surface text-danger-700 shadow-sm' : 'text-text-muted hover:text-text',
               ]"
               @click="changeType('expense')"
             >
@@ -687,7 +687,7 @@ function retryLoad(): void {
               type="button"
               :class="[
                 'rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                form.type === 'income' ? 'bg-white text-secondary-700 shadow-sm' : 'text-text-muted hover:text-text',
+                form.type === 'income' ? 'bg-surface text-secondary-700 shadow-sm' : 'text-text-muted hover:text-text',
               ]"
               @click="changeType('income')"
             >

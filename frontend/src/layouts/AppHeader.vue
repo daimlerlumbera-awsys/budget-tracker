@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { Menu, LogOut } from 'lucide-vue-next'
+import { Menu, LogOut, Moon, Sun } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useTheme } from '@/composables/useTheme'
+
+const { isDark, toggleTheme } = useTheme()
 
 defineProps<{ title: string }>()
 const emit = defineEmits<{ openSidebar: [] }>()
@@ -34,6 +37,17 @@ async function handleSignOut() {
     <!-- Action slot — right side -->
     <div class="flex items-center gap-2">
       <slot name="actions" />
+
+      <!-- Theme toggle -->
+      <button
+        class="rounded-md p-1.5 text-text-muted hover:bg-surface-alt hover:text-text transition-colors"
+        :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
+        :title="isDark ? 'Light mode' : 'Dark mode'"
+        @click="toggleTheme"
+      >
+        <Sun v-if="isDark" :size="20" aria-hidden="true" />
+        <Moon v-else :size="20" aria-hidden="true" />
+      </button>
 
       <!-- Sign-out -->
       <button

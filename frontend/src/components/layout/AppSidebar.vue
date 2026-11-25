@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import {
   LayoutDashboard,
@@ -6,16 +7,27 @@ import {
   ArrowLeftRight,
   History,
   ShieldCheck,
+  Users,
   Settings,
   X,
 } from 'lucide-vue-next'
+import { useAuthStore } from '@/stores/auth'
+import { useAdminFinanceStore } from '@/stores/adminFinance'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const route = useRoute()
+const authStore = useAuthStore()
+const adminStore = useAdminFinanceStore()
 
-const navItems = [
+watch(
+  () => authStore.user?.id,
+  (id) => { if (id) void adminStore.checkAdmin(id) },
+  { immediate: true },
+)
+
+const userNavItems = [
   { label: 'Overview',     to: '/',             icon: LayoutDashboard },
   { label: 'Budgets',      to: '/budgets',      icon: Wallet },
   { label: 'Transactions', to: '/transactions', icon: ArrowLeftRight },
@@ -24,8 +36,19 @@ const navItems = [
   { label: 'Settings',     to: '/settings',     icon: Settings },
 ]
 
+// Admins are view-only: no pages where data is entered
+const adminNavItems = [
+  { label: 'Dashboard',     to: '/admin',        icon: LayoutDashboard },
+  { label: 'User Finances', to: '/admin/users',  icon: Users },
+  { label: 'BDO Life',      to: '/bdo-life',     icon: ShieldCheck },
+  { label: 'Settings',      to: '/settings',     icon: Settings },
+]
+
+const navItems = computed(() => adminStore.isAdmin === true ? adminNavItems : userNavItems)
+
 function isActive(path: string) {
-  return path === '/' ? route.path === '/' : route.path.startsWith(path)
+  if (path === '/' || path === '/admin') return route.path === path
+  return route.path.startsWith(path)
 }
 </script>
 
