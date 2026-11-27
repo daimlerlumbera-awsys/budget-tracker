@@ -6,6 +6,7 @@ import {
   Wallet,
   ArrowLeftRight,
   History,
+  ChartPie,
   ShieldCheck,
   Users,
   Settings,
@@ -32,6 +33,7 @@ const userNavItems = [
   { label: 'Budgets',      to: '/budgets',      icon: Wallet },
   { label: 'Transactions', to: '/transactions', icon: ArrowLeftRight },
   { label: 'History',      to: '/history',      icon: History },
+  { label: 'Reports',      to: '/reports',      icon: ChartPie },
   { label: 'BDO Life',     to: '/bdo-life',     icon: ShieldCheck },
   { label: 'Settings',     to: '/settings',     icon: Settings },
 ]

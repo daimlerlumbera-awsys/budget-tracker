@@ -48,6 +48,12 @@ const router = createRouter({
           meta: { title: 'History', requiresAuth: true, userOnly: true },
         },
         {
+          path: 'reports',
+          name: 'reports',
+          component: () => import('@/views/ReportsView.vue'),
+          meta: { title: 'Reports', requiresAuth: true, userOnly: true },
+        },
+        {
           path: 'bdo-life',
           name: 'bdo-life',
           component: () => import('@/views/BDOLifeView.vue'),
